@@ -137,6 +137,7 @@ public:
     static const std::string LatexSpecialFilename;
     static const Glib::ustring LatexTextDefault;
     static const int PrintZoom;
+    static const int PreviewZoom;
 
     static void ensureRenderingBinariesTested();
     static Glib::ustring getRenderingErrorMessage(const Glib::ustring* pLatexText = nullptr);
@@ -165,8 +166,8 @@ private:
 
 protected:
     static bool   _renderingBinariesTested;
-    static bool   _renderingBinariesLatexOk;
-    static bool   _renderingBinariesDviPngOk;
+    static bool   _renderingBinariesLuaLatexOk;
+    static bool   _renderingBinariesPdf2SvgOk;
     Glib::ustring _latexText;
     const size_t  _uniqueId;
 };

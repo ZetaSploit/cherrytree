@@ -107,36 +107,36 @@ bool alter_PATH_env_var()
 }
 #endif /* _WIN32 */
 
-const char* get_latex_dvipng_console_bin_prefix()
+const char* get_latex_pdf2svg_console_bin_prefix()
 {
-    auto _get_latex_dvipng_console_bin_prefix = []()->const char*{
+    auto _get_latex_pdf2svg_console_bin_prefix = []()->const char*{
 #if defined(_WIN32)
         if (not _mingw64Dir.empty()) {
             const fs::path binDir = _mingw64Dir / "bin";
-            const fs::path latexBin = binDir / "latex.exe";
-            const fs::path dvipngBin = binDir / "dvipng.exe";
-            if (fs::is_regular_file(latexBin) and fs::is_regular_file(dvipngBin)) {
-                spdlog::debug("found latex and dvipng in {}", binDir.c_str());
+            const fs::path lualatexBin = binDir / "lualatex.exe";
+            const fs::path pdf2svgBin = binDir / "pdf2svg.exe";
+            if (fs::is_regular_file(lualatexBin) and fs::is_regular_file(pdf2svgBin)) {
+                spdlog::debug("found lualatex and pdf2svg in {}", binDir.c_str());
                 return g_strdup(binDir.c_str());
             }
-            spdlog::debug("?? NOT FOUND latex and dvipng in {}", binDir.c_str());
+            spdlog::debug("?? NOT FOUND lualatex and pdf2svg in {}", binDir.c_str());
         }
 #else /* !_WIN32 */
         const fs::path tinytex_bin_x86_64_linux = _exePath.parent_path() / "x86_64-linux";
         if (fs::is_directory(tinytex_bin_x86_64_linux)) {
-            const fs::path tinytex_latex = tinytex_bin_x86_64_linux / "latex";
-            const fs::path tinytex_dvipng = tinytex_bin_x86_64_linux / "dvipng";
-            if (fs::is_regular_file(tinytex_latex) and fs::is_regular_file(tinytex_dvipng)) {
-                spdlog::debug("found latex and dvipng in {}", tinytex_bin_x86_64_linux.c_str());
+            const fs::path tinytex_lualatex = tinytex_bin_x86_64_linux / "lualatex";
+            const fs::path tinytex_pdf2svg = tinytex_bin_x86_64_linux / "pdf2svg";
+            if (fs::is_regular_file(tinytex_lualatex) and fs::is_regular_file(tinytex_pdf2svg)) {
+                spdlog::debug("found lualatex and pdf2svg in {}", tinytex_bin_x86_64_linux.c_str());
                 return g_strdup_printf("cd %s && ./", tinytex_bin_x86_64_linux.c_str());
             }
-            spdlog::debug("?? NOT FOUND latex and dvipng in {}", tinytex_bin_x86_64_linux.c_str());
+            spdlog::debug("?? NOT FOUND lualatex and pdf2svg in {}", tinytex_bin_x86_64_linux.c_str());
         }
 #endif /* !_WIN32 */
         return g_strdup("");
     };
-    static const char* latex_dvipng_console_bin_prefix = _get_latex_dvipng_console_bin_prefix();
-    return latex_dvipng_console_bin_prefix;
+    static const char* latex_pdf2svg_console_bin_prefix = _get_latex_pdf2svg_console_bin_prefix();
+    return latex_pdf2svg_console_bin_prefix;
 }
 
 void register_exe_path_detect_if_portable(const char* exe_path)

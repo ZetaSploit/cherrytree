@@ -53,7 +53,7 @@ bool alter_TEXMFROOT_env_var();
 bool alter_PATH_env_var();
 #endif /* _WIN32 */
 
-const char* get_latex_dvipng_console_bin_prefix();
+const char* get_latex_pdf2svg_console_bin_prefix();
 
 bool copy_file(const path& from, const path& to);
 

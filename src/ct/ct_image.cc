@@ -29,6 +29,7 @@
 #include "ct_storage_control.h"
 #include "ct_storage_multifile.h"
 #include <regex>
+#include <gdkmm/pixbufloader.h>
 
 CtImage::CtImage(CtMainWin* pCtMainWin,
                  const std::string& rawBlob,
@@ -409,9 +410,10 @@ bool CtImageAnchor::_on_button_press_event(GdkEventButton* event)
 #endif
 
 /*static*/const int CtImageLatex::PrintZoom{4};
+/*static*/const int CtImageLatex::PreviewZoom{2};
 /*static*/const std::string CtImageLatex::LatexSpecialFilename{"__ct_special.tex"};
-/*static*/const Glib::ustring CtImageLatex::LatexTextDefault{"\\documentclass{article}\n"
-                                                             "\\pagestyle{empty}\n"
+/*static*/const Glib::ustring CtImageLatex::LatexTextDefault{"\\documentclass[border=2pt, preview]{standalone}\n"
+                                                             //"\\pagestyle{empty}\n"
                                                              "\\usepackage{amsmath}\n"
                                                              "\\begin{document}\n"
                                                              "\\begin{align*}\n"
@@ -421,15 +423,15 @@ bool CtImageAnchor::_on_button_press_event(GdkEventButton* event)
                                                              "\\end{align*}\n"
                                                              "\\end{document}"};
 /*static*/bool CtImageLatex::_renderingBinariesTested{false};
-/*static*/bool CtImageLatex::_renderingBinariesLatexOk{true};
-/*static*/bool CtImageLatex::_renderingBinariesDviPngOk{true};
+/*static*/bool CtImageLatex::_renderingBinariesLuaLatexOk{false};
+/*static*/bool CtImageLatex::_renderingBinariesPdf2SvgOk{false};
 
 CtImageLatex::CtImageLatex(CtMainWin* pCtMainWin,
                            const Glib::ustring& latexText,
                            const int charOffset,
                            const std::string& justification,
                            const size_t uniqueId)
- : CtImage{pCtMainWin, _get_latex_image(pCtMainWin, latexText, uniqueId), charOffset, justification}
+ : CtImage{pCtMainWin, _get_latex_image(pCtMainWin, latexText, uniqueId, PreviewZoom), charOffset, justification}
  , _latexText{latexText}
  , _uniqueId{uniqueId}
 {
@@ -486,7 +488,7 @@ void CtImageLatex::update_tooltip()
 
 #if defined(_WIN32)
 #define CONSOLE_SILENCE_OUTPUT  " > nul"
-#define CONSOLE_BIN_PREFIX      fs::get_latex_dvipng_console_bin_prefix()
+#define CONSOLE_BIN_PREFIX      fs::get_latex_pdf2svg_console_bin_prefix()
 #else // !_WIN32
 #define CONSOLE_SILENCE_OUTPUT  " > /dev/null"
 #if defined(_FLATPAK_BUILD)
@@ -494,34 +496,36 @@ void CtImageLatex::update_tooltip()
 #elif defined(_SNAP_BUILD)
 #define CONSOLE_BIN_PREFIX      "cd /snap/cherrytree/current/TinyTeX/bin/x86_64-linux && ./"
 #else // !_FLATPAK_BUILD && !_SNAP_BUILD
-#define CONSOLE_BIN_PREFIX      fs::get_latex_dvipng_console_bin_prefix()
+#define CONSOLE_BIN_PREFIX      fs::get_latex_pdf2svg_console_bin_prefix()
 #endif // !_FLATPAK_BUILD
 #endif // !_WIN32
 
-static const char* get_latex_bin_cmd()
+static const char* get_lualatex_bin_cmd()
 {
-    auto _get_latex_bin_cmd = []()->const char*{
+    auto _get_lualatex_bin_cmd = []()->const char*{
 #if defined(_WIN32)
-        return CONSOLE_BIN_PREFIX[0] ? g_strdup(".\\latex.exe") : g_strdup("latex.exe");
+        return CONSOLE_BIN_PREFIX[0] ? g_strdup(".\\lualatex.exe") : g_strdup("lualatex.exe");
 #else /* !_WIN32 */
-        return g_strdup_printf("%slatex", CONSOLE_BIN_PREFIX);
+        return g_strdup("lualatex");
 #endif /* !_WIN32 */
     };
-    static const char* latex_bin_cmd = _get_latex_bin_cmd();
-    return latex_bin_cmd;
+
+    static const char* lualatex_bin_cmd = _get_lualatex_bin_cmd();
+    return lualatex_bin_cmd;
 }
 
-static const char* get_dvipng_bin_cmd()
+static const char* get_pdf2svg_bin_cmd()
 {
-    auto _get_dvipng_bin_cmd = []()->const char*{
+    auto _get_pdf2svg_bin_cmd = []()->const char*{
 #if defined(_WIN32)
-        return CONSOLE_BIN_PREFIX[0] ? g_strdup(".\\dvipng.exe") : g_strdup("dvipng.exe");
+        return CONSOLE_BIN_PREFIX[0] ? g_strdup(".\\pdf2svg.exe") : g_strdup("pdf2svg.exe");
 #else /* !_WIN32 */
-        return g_strdup_printf("%sdvipng", CONSOLE_BIN_PREFIX);
+        return g_strdup("pdf2svg");
 #endif /* !_WIN32 */
     };
-    static const char* dvipng_bin_cmd = _get_dvipng_bin_cmd();
-    return dvipng_bin_cmd;
+
+    static const char* pdf2svg_bin_cmd = _get_pdf2svg_bin_cmd();
+    return pdf2svg_bin_cmd;
 }
 
 /*static*/bool CtImageLatex::_is_latex_text_safe(const Glib::ustring& latexText)
@@ -561,7 +565,7 @@ static const char* get_dvipng_bin_cmd()
 /*static*/Glib::RefPtr<Gdk::Pixbuf> CtImageLatex::_get_latex_image(CtMainWin* pCtMainWin, const Glib::ustring& latexText, const size_t uniqueId, const int zoom)
 {
     CtImageLatex::ensureRenderingBinariesTested();
-    if (not _renderingBinariesLatexOk or not _renderingBinariesDviPngOk) {
+    if (not _renderingBinariesLuaLatexOk or not _renderingBinariesPdf2SvgOk) {
         // fallback
         #if GTKMM_MAJOR_VERSION < 4
         return pCtMainWin->get_icon_theme()->load_icon("ct_warning", 48);
@@ -588,70 +592,69 @@ static const char* get_dvipng_bin_cmd()
     bool success = false;
 #ifdef _WIN32
     cmd = fmt::sprintf("%s --interaction=batchmode -no-shell-escape --cnf-line=openin_any=p --cnf-line=openout_any=p -output-directory=%s %s"
-                       , get_latex_bin_cmd(), tmp_dirpath.c_str(), tmp_filepath_tex.c_str());
+                       , get_lualatex_bin_cmd(), tmp_dirpath.c_str(), tmp_filepath_tex.c_str());
     success = CtMiscUtil::system_cmd(cmd.c_str(), CONSOLE_BIN_PREFIX);
 #else /* !_WIN32 */
-    const std::string latex_bin_cmd = get_latex_bin_cmd();
-    if (latex_bin_cmd.find("&&") == std::string::npos) {
+    const std::string lualatex_bin_cmd = get_lualatex_bin_cmd();
+    if (lualatex_bin_cmd.find("&&") == std::string::npos) {
         g_autofree gchar* quoted_tmp_dir = g_shell_quote(tmp_dirpath.c_str());
         g_autofree gchar* quoted_tex_basename = g_shell_quote(tex_basename.c_str());
         cmd = fmt::sprintf("cd %s && %s --interaction=batchmode -no-shell-escape --cnf-line=openin_any=p --cnf-line=openout_any=p -output-directory=. %s"
                            CONSOLE_SILENCE_OUTPUT
-                           , quoted_tmp_dir, latex_bin_cmd.c_str(), quoted_tex_basename);
+                           , quoted_tmp_dir, lualatex_bin_cmd.c_str(), quoted_tex_basename);
         success = CtMiscUtil::system_cmd(cmd.c_str(), "");
     }
     else {
         // Package builds with bundled TinyTeX need explicit execution from the tmp dir,
         // otherwise openin/openout paranoid mode denies access to the source file in /tmp.
     #if defined(_FLATPAK_BUILD)
-        const fs::path latex_exe{ "/app/bin/.TinyTeX/bin/x86_64-linux/latex" };
+        const fs::path latex_exe{ "/app/bin/.TinyTeX/bin/x86_64-linux/lualatex" };
         g_autofree gchar* quoted_tmp_dir = g_shell_quote(tmp_dirpath.c_str());
         g_autofree gchar* quoted_tex_basename = g_shell_quote(tex_basename.c_str());
-        g_autofree gchar* quoted_latex_exe = g_shell_quote(latex_exe.c_str());
+        g_autofree gchar* quoted_lualatex_exe = g_shell_quote(latex_exe.c_str());
         cmd = fmt::sprintf("cd %s && %s --interaction=batchmode -no-shell-escape --cnf-line=openin_any=p --cnf-line=openout_any=p -output-directory=. %s"
                    CONSOLE_SILENCE_OUTPUT
-                   , quoted_tmp_dir, quoted_latex_exe, quoted_tex_basename);
+                   , quoted_tmp_dir, quoted_lualatex_exe, quoted_tex_basename);
         success = CtMiscUtil::system_cmd(cmd.c_str(), "");
     #elif defined(_SNAP_BUILD)
-        const fs::path latex_exe{ "/snap/cherrytree/current/TinyTeX/bin/x86_64-linux/latex" };
+        const fs::path latex_exe{ "/snap/cherrytree/current/TinyTeX/bin/x86_64-linux/lualatex" };
         g_autofree gchar* quoted_tmp_dir = g_shell_quote(tmp_dirpath.c_str());
         g_autofree gchar* quoted_tex_basename = g_shell_quote(tex_basename.c_str());
-        g_autofree gchar* quoted_latex_exe = g_shell_quote(latex_exe.c_str());
+        g_autofree gchar* quoted_lualatex_exe = g_shell_quote(latex_exe.c_str());
         cmd = fmt::sprintf("cd %s && %s --interaction=batchmode -no-shell-escape --cnf-line=openin_any=p --cnf-line=openout_any=p -output-directory=. %s"
                    CONSOLE_SILENCE_OUTPUT
-                   , quoted_tmp_dir, quoted_latex_exe, quoted_tex_basename);
+                   , quoted_tmp_dir, quoted_lualatex_exe, quoted_tex_basename);
         success = CtMiscUtil::system_cmd(cmd.c_str(), "");
     #else
         // Portable/package builds may prepend a command chain (for example AppImage: "cd ... && ./latex").
         // Extract the bundled latex executable path and run it from the temp directory.
         static const std::string chain_prefix{"cd "};
-        static const std::string chain_suffix{" && ./latex"};
-        if (str::startswith(latex_bin_cmd, chain_prefix) and str::endswith(latex_bin_cmd, chain_suffix)) {
-            const std::string bin_dir = latex_bin_cmd.substr(chain_prefix.size(), latex_bin_cmd.size() - chain_prefix.size() - chain_suffix.size());
-            const fs::path latex_exe = fs::path{bin_dir} / "latex";
+        static const std::string chain_suffix{" && ./lualatex"};
+        if (str::startswith(lualatex_bin_cmd, chain_prefix) and str::endswith(lualatex_bin_cmd, chain_suffix)) {
+            const std::string bin_dir = lualatex_bin_cmd.substr(chain_prefix.size(), lualatex_bin_cmd.size() - chain_prefix.size() - chain_suffix.size());
+            const fs::path lualatex_exe = fs::path{bin_dir} / "lualatex";
             g_autofree gchar* quoted_tmp_dir = g_shell_quote(tmp_dirpath.c_str());
             g_autofree gchar* quoted_tex_basename = g_shell_quote(tex_basename.c_str());
-            g_autofree gchar* quoted_latex_exe = g_shell_quote(latex_exe.c_str());
+            g_autofree gchar* quoted_lualatex_exe = g_shell_quote(lualatex_exe.c_str());
             cmd = fmt::sprintf("cd %s && %s --interaction=batchmode -no-shell-escape --cnf-line=openin_any=p --cnf-line=openout_any=p -output-directory=. %s"
                                CONSOLE_SILENCE_OUTPUT
-                               , quoted_tmp_dir, quoted_latex_exe, quoted_tex_basename);
+                               , quoted_tmp_dir, quoted_lualatex_exe, quoted_tex_basename);
             success = CtMiscUtil::system_cmd(cmd.c_str(), "");
         }
         else {
             // Fallback for unexpected command formats.
             cmd = fmt::sprintf("%s --interaction=batchmode -no-shell-escape --cnf-line=openin_any=p --cnf-line=openout_any=p -output-directory=%s %s"
                                CONSOLE_SILENCE_OUTPUT
-                               , latex_bin_cmd.c_str(), tmp_dirpath.c_str(), tmp_filepath_tex.c_str());
+                               , lualatex_bin_cmd.c_str(), tmp_dirpath.c_str(), tmp_filepath_tex.c_str());
             success = CtMiscUtil::system_cmd(cmd.c_str(), CONSOLE_BIN_PREFIX);
         }
 #endif
     }
 #endif /* _WIN32 */
-    std::string tmp_filepath_noext = tmp_filepath_tex.string();
-    tmp_filepath_noext = tmp_filepath_noext.substr(0, tmp_filepath_noext.size() - 3);
-    const fs::path tmp_filepath_dvi = tmp_filepath_noext + "dvi";
-    if (not success or not fs::is_regular_file(tmp_filepath_dvi)) {
-        if (success) spdlog::debug("!! cmd '{}' ok but missing {}", cmd, tmp_filepath_dvi.c_str());
+    const std::string tmp_filepath_noext = tmp_filepath_tex.string().substr(0, tmp_filepath_tex.string().size() - 3);
+    const fs::path tmp_filepath_pdf = tmp_filepath_noext + "pdf";
+    if (not success or not fs::is_regular_file(tmp_filepath_pdf)) {
+        if (success) spdlog::debug("!! cmd '{}' ok but missing {}", cmd, tmp_filepath_pdf.c_str());
         // fallback
         #if GTKMM_MAJOR_VERSION < 4
         return pCtMainWin->get_icon_theme()->load_icon("ct_bug", 48);
@@ -659,17 +662,25 @@ static const char* get_dvipng_bin_cmd()
         return Glib::RefPtr<Gdk::Pixbuf>{};
         #endif
     }
-    const fs::path tmp_filepath_png = tmp_filepath_noext + "png";
-    const int latexSizeDpi = zoom * pCtMainWin->get_ct_config()->latexSizeDpi;
-    cmd = fmt::sprintf("%s -q -T tight -D %d %s -o %s"
-#ifndef _WIN32
-                       CONSOLE_SILENCE_OUTPUT
-#endif /* !_WIN32 */
-                       , get_dvipng_bin_cmd(), latexSizeDpi, tmp_filepath_dvi.c_str(), tmp_filepath_png.c_str());
+
+    const fs::path tmp_filepath_svg = tmp_filepath_noext + "svg";
+
+    g_autofree gchar* quoted_pdf = g_shell_quote(tmp_filepath_pdf.c_str());
+    g_autofree gchar* quoted_svg = g_shell_quote(tmp_filepath_svg.c_str());
+
+    cmd = std::string{get_pdf2svg_bin_cmd()} +
+        " " + quoted_pdf + 
+        " " + quoted_svg;
+
+#ifdef _WIN32
+        cmd += CONSOLE_SILENCE_OUTPUT;
+#endif
+
     success = CtMiscUtil::system_cmd(cmd.c_str(), CONSOLE_BIN_PREFIX);
-    if (not success or not fs::is_regular_file(tmp_filepath_png)) {
-        if (success) spdlog::debug("!! cmd '{}' ok but missing {}", cmd, tmp_filepath_png.c_str());
-        _renderingBinariesDviPngOk = false;
+
+    if (not success or not fs::is_regular_file(tmp_filepath_svg)) {
+        if (success) spdlog::debug("!! cmd '{}' ok but missing {}", cmd, tmp_filepath_svg.c_str());
+        _renderingBinariesPdf2SvgOk = false;
         // fallback
         #if GTKMM_MAJOR_VERSION < 4
         return pCtMainWin->get_icon_theme()->load_icon("ct_warning", 48);
@@ -679,9 +690,49 @@ static const char* get_dvipng_bin_cmd()
     }
     Glib::RefPtr<Gdk::Pixbuf> rPixbuf;
     try {
-        rPixbuf = Gdk::Pixbuf::create_from_file(tmp_filepath_png.c_str());
-        return rPixbuf;
+        const std::string svg_data =
+             Glib::file_get_contents(tmp_filepath_svg.string());
+
+        auto size_loader = Gdk::PixbufLoader::create();
+
+        size_loader->write(
+            reinterpret_cast<const guint8*>(svg_data.data()),
+            svg_data.size()
+        ); 
+
+        size_loader->close(); 
+        auto size_pixbuf = size_loader->get_pixbuf();
+
+        if (!size_pixbuf) {
+            spdlog::error("{}: failed to determine SVg dimensions", __FUNCTION__);
+            return {};
+        }
+
+        const int width = size_pixbuf->get_width();
+        const int height = size_pixbuf->get_height();
+
+        auto loader = Gdk::PixbufLoader::create();
+
+        if (zoom > 1) {
+            loader->set_size(
+                width * zoom,
+                height * zoom
+            );
+        }
+
+        loader->write(
+            reinterpret_cast<const guint8*>(svg_data.data()),
+            svg_data.size()
+        );
+
+        loader->close();
+        rPixbuf = loader->get_pixbuf();
+
+        if (rPixbuf) {
+            return rPixbuf;
+        }
     }
+
     catch (Glib::Error& error) {
         spdlog::error("{} {}", __FUNCTION__, std::string(error.what()));
     }
@@ -698,17 +749,14 @@ static const char* get_dvipng_bin_cmd()
     if (_renderingBinariesTested) {
         return;
     }
+
     _renderingBinariesTested = true;
-    _renderingBinariesLatexOk = CtMiscUtil::system_cmd(fmt::sprintf("%s --version"
-#ifndef _WIN32
-                                                                    CONSOLE_SILENCE_OUTPUT
-#endif /* !_WIN32 */
-                                                                    , get_latex_bin_cmd()).c_str(), CONSOLE_BIN_PREFIX);
-    _renderingBinariesDviPngOk = CtMiscUtil::system_cmd(fmt::sprintf("%s --version"
-#ifndef _WIN32
-                                                                    CONSOLE_SILENCE_OUTPUT
-#endif /* !_WIN32 */
-                                                                    , get_dvipng_bin_cmd()).c_str(), CONSOLE_BIN_PREFIX);
+
+    _renderingBinariesLuaLatexOk = 
+        not Glib::find_program_in_path("lualatex").empty();
+
+    _renderingBinariesPdf2SvgOk =
+        not Glib::find_program_in_path("pdf2svg").empty();
 }
 
 /*static*/Glib::ustring CtImageLatex::getRenderingErrorMessage(const Glib::ustring* pLatexText)
@@ -723,26 +771,26 @@ static const char* get_dvipng_bin_cmd()
                _("Remove commands such as \\verbatiminput, \\openin, \\openout and unsafe \\input/\\include paths") +
                Glib::ustring{"\n"};
     }
-    if (not _renderingBinariesLatexOk and not _renderingBinariesDviPngOk) {
-        return Glib::ustring{"<b><span foreground=\"red\">"} + _("Could not access the executables 'latex' and 'dvipng'") + Glib::ustring{"</span></b>\n"} +
+    if (not _renderingBinariesLuaLatexOk and not _renderingBinariesPdf2SvgOk) {
+        return Glib::ustring{"<b><span foreground=\"red\">"} + _("Could not access the executables 'lualatex' and 'pdf2svg'") + Glib::ustring{"</span></b>\n"} +
                Glib::ustring{"* "} + _("For example, on Ubuntu the packages to install are:") +
-               Glib::ustring{"\n  <tt>$sudo apt install texlive-latex-base</tt>\n  <tt>$sudo apt install dvipng</tt>\n"} +
+               Glib::ustring{"\n  <tt>$sudo apt install texlive-luatex</tt>\n  <tt>$sudo apt install pdf2svg</tt>\n"} +
                Glib::ustring{"* "} + _("For example, on macOS the packages to install are:") +
-               Glib::ustring{"\n  <tt>$brew install --cask basictex</tt>\n  <tt>$sudo tlmgr update --self</tt>\n  <tt>$sudo tlmgr install dvipng</tt>\n"};
+               Glib::ustring{"\n  <tt>$brew install --cask basictex</tt>\n  <tt>$sudo tlmgr update --self</tt>\n  <tt>$sudo tlmgr install pdf2svg</tt>\n"};
     }
-    if (not _renderingBinariesLatexOk) {
-        return Glib::ustring{"<b><span foreground=\"red\">"} + _("Could not access the executable 'latex'") + Glib::ustring{"</span></b>\n"} +
+    if (not _renderingBinariesLuaLatexOk) {
+        return Glib::ustring{"<b><span foreground=\"red\">"} + _("Could not access the executable 'lualatex'") + Glib::ustring{"</span></b>\n"} +
                Glib::ustring{"* "} + _("For example, on Ubuntu the packages to install are:") +
-               Glib::ustring{"\n  <tt>$sudo apt install texlive-latex-base</tt>\n"} +
+               Glib::ustring{"\n  <tt>$sudo apt install texlive-luatex</tt>\n"} +
                Glib::ustring{"* "} + _("For example, on macOS the packages to install are:") +
-               Glib::ustring{"\n  <tt>$brew install --cask basictex</tt>\n  <tt>$sudo tlmgr update --self</tt>\n  <tt>$sudo tlmgr install dvipng</tt>\n"};
+               Glib::ustring{"\n  <tt>$brew install --cask basictex</tt>\n  <tt>$sudo tlmgr update --self</tt>\n  <tt>$sudo tlmgr install pdf2svg</tt>\n"};
     }
-    if (not _renderingBinariesDviPngOk) {
-        return Glib::ustring{"<b><span foreground=\"red\">"} + _("Could not access the executable 'dvipng'") + Glib::ustring{"</span></b>\n"} +
+    if (not _renderingBinariesPdf2SvgOk) {
+        return Glib::ustring{"<b><span foreground=\"red\">"} + _("Could not access the executable 'pdf2svg'") + Glib::ustring{"</span></b>\n"} +
                Glib::ustring{"* "} + _("For example, on Ubuntu the packages to install are:") +
-               Glib::ustring{"\n  <tt>$sudo apt install dvipng</tt>\n"} +
+               Glib::ustring{"\n  <tt>$sudo apt install pdf2svg</tt>\n"} +
                Glib::ustring{"* "} + _("For example, on macOS the packages to install are:") +
-               Glib::ustring{"\n  <tt>$brew install --cask basictex</tt>\n  <tt>$sudo tlmgr update --self</tt>\n  <tt>$sudo tlmgr install dvipng</tt>\n"};
+               Glib::ustring{"\n  <tt>$brew install --cask basictex</tt>\n  <tt>$sudo tlmgr update --self</tt>\n  <tt>$sudo tlmgr install pdf2svg</tt>\n"};
     }
     return "";
 }
