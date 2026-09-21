@@ -12,8 +12,11 @@ BUNDLED_SPDLOG_FMT=""
 NO_TESTS=""
 NO_DEPRECATED=""
 WITH_GTK4=""
+WITH_LIBXMLPP5=""
 RET_VAL=""
 [ -d ${BUILD_DIR} ] || mkdir ${BUILD_DIR}
+
+[ -n "${MINGW_PACKAGE_PREFIX}" ] && WITH_LIBXMLPP5="Y"
 
 f_any_argument_matches () {
   if [ "${ARG1_VAL_LOWER}" == "$1" ] || [ "${ARG2_VAL_LOWER}" == "$1" ] || [ "${ARG3_VAL_LOWER}" == "$1" ]
@@ -33,7 +36,7 @@ f_any_argument_matches () {
 f_any_argument_matches "help" "--help" "-h"
 if [ -n "${RET_VAL}" ]
 then
-  echo "$0 [dbg|debug|rel|release] [notest|notests] [bundledspdfmt] [deb|debian] [rpm] [appimage]"
+  echo "$0 [dbg|debug|rel|release] [gtk4|gtkmm4] [xmlpp5|xml++5] [notest|notests] [bundledspdfmt] [deb|debian] [rpm] [appimage]"
   exit 0
 fi
 
@@ -51,6 +54,9 @@ f_any_argument_matches "rpm"
 
 f_any_argument_matches "gtk4" "gtkmm4"
 [ -n "${RET_VAL}" ] && WITH_GTK4="Y"
+
+f_any_argument_matches "xmlpp5" "xml++5"
+[ -n "${RET_VAL}" ] && WITH_LIBXMLPP5="Y"
 
 f_any_argument_matches "appimage" "appimg"
 [ -n "${RET_VAL}" ] && MAKE_APPIMAGE="Y"
@@ -106,6 +112,10 @@ then
   then
     BUNDLED_SPDLOG_FMT="Y"
   fi
+  if [ "${DISTRIB_ID}${DISTRIB_RELEASE}" == "Ubuntu26.04" ]
+  then
+    WITH_LIBXMLPP5="Y"
+  fi
 fi
 
 [ -n "${BUNDLED_SPDLOG_FMT}" ] && EXTRA_CMAKE_FLAGS="${EXTRA_CMAKE_FLAGS} -DUSE_SHARED_FMT_SPDLOG=''"
@@ -127,6 +137,15 @@ fi
 if [ -n "${WITH_GTK4}" ]
 then
   EXTRA_CMAKE_FLAGS="${EXTRA_CMAKE_FLAGS} -DWITH_GTK4='ON'"
+else
+  EXTRA_CMAKE_FLAGS="${EXTRA_CMAKE_FLAGS} -DWITH_GTK4='OFF'"
+fi
+
+if [ -n "${WITH_LIBXMLPP5}" ]
+then
+  EXTRA_CMAKE_FLAGS="${EXTRA_CMAKE_FLAGS} -DWITH_LIBXMLPP5='ON'"
+else
+  EXTRA_CMAKE_FLAGS="${EXTRA_CMAKE_FLAGS} -DWITH_LIBXMLPP5='OFF'"
 fi
 
 git submodule update --init --recursive
